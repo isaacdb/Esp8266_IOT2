@@ -1,5 +1,7 @@
 /*
-Atividade4
+UNISATC
+Atividade utilizando a placa ESP8266 para a disciplina de IOT2
+Academico: Isaac Debiasi de Souza
 */
 
 /*	Relação entre pinos da WeMos D1 R2 e GPIOs do ESP8266
@@ -60,7 +62,7 @@ Atividade4
 #define GPIO_OUTPUT_PIN_SEL  	((1ULL<<LED_1) | (1ULL<<LED_2))
 #define GPIO_INPUT_PIN_SEL  	(1ULL<<BUTTON)
 
-/*Parametro para conexão com o wifi, podem ser acessados atravez do comando make menuconfig*/
+/*Parametro para conexão com o wifi, podem ser acessados e definidos atravez do comando make menuconfig*/
 #define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
 #define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
 #define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
@@ -99,23 +101,17 @@ void task_button(void* pvParameter);
 
 /* Variáveis Globais */
 static const char* TAG = "wifi station: ";
-static EventGroupHandle_t s_wifi_event_group;
-static EventGroupHandle_t sensor_event_group;
+static EventGroupHandle_t s_wifi_event_group; //Grupo de bits de monitoramento para os estados do wifi
+static EventGroupHandle_t sensor_event_group; //Grupo de bits de monitoramento para os estados dos sensores
 static int s_retry_num = 0;
 
 /*Variaveis globais para o socket*/
 static const char* TAG2 = "example";
-static const char* MSG_ = " Para receber uma leitura do sensores, digite 'DIST' ou 'TEMP'. ";
-static const char* payload = "Message from ESP8266 ";
+static const char* MSG_ = "Para receber uma leitura do sensores, digite 'DIST' ou 'TEMP'. \n";
 
-QueueHandle_t buffer;//Objeto da queue
+QueueHandle_t buffer;//Objeto da queue, pode receber informações de todas as tasks, tem um tamanho determinado, e um tempo de resposta definido.
 
-/*
-  Função de callback responsável em receber as notificações durante as etapas de conexão do WiFi.
-  Por meio desta função de callback podemos saber o momento em que o WiFi do ESP8266 foi inicializado com sucesso
-  até quando é recebido o aceite do IP pelo roteador (no caso de Ip dinâmico).
-  ref: https://github.com/espressif/esp-idf/tree/c77c4ccf6c43ab09fd89e7c907bf5cf2a3499e3b/examples/wifi/getting_started/station
-*/
+//Funcao para a conexão passo a passo com o wifi, sendo monitorado todos os seus estados.
 static void event_handler(void* arg, esp_event_base_t event_base,
 	int32_t event_id, void* event_data)
 {
@@ -133,8 +129,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 	}
 	else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
-			/*
-			Se chegou aqui foi devido a falha de conexão com a rede WiFi.
+			/*Se chegou aqui foi devido a falha de conexão com a rede WiFi.
 			Por esse motivo, haverá uma nova tentativa de conexão WiFi pelo ESP8266.
 			*/
 			xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
@@ -146,7 +141,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 		}
 		else {
 			/*
-				É necessário apagar o bit para avisar as demais Tasks que a
+				É necessário apagar os bit para avisar as demais Tasks que a
 				conexão WiFi está offline no momento.
 			*/
 			xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
@@ -163,7 +158,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 		ESP_LOGI(TAG, "Conectado! O IP atribuido é:" IPSTR, IP2STR(&event->ip_info.ip));
 		s_retry_num = 0;
 		/*
-				Seta o bit indicativo para avisar as demais Tasks que o WiFi foi conectado.
+			Seta o bit indicativo para avisar as demais Tasks que o WiFi foi conectado.
 		*/
 		xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
 		xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
@@ -193,10 +188,6 @@ void wifi_init_sta(void)
 		},
 	};
 
-	/* Setting a password implies station will connect to all security modes including WEP/WPA.
-		* However these modes are deprecated and not advisable to be used. Incase your Access point
-		* doesn't support WPA2, these mode can be enabled by commenting below line */
-
 	if (strlen((char*)wifi_config.sta.password)) {
 		wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 	}
@@ -207,49 +198,43 @@ void wifi_init_sta(void)
 
 	ESP_LOGI(TAG, "wifi_init_sta finished.");
 }
-
-
+/*Task responsavel por piscar um Led no proprio dispositivo para deixar mais visivel a situacao atual da conexao wifi*/
 void task_GPIO_Blink(void* pvParameter)
 {
-	/*  Parâmetros de controle da GPIO da função "gpio_set_direction"
-	   GPIO_MODE_OUTPUT       			//Saída
-	   GPIO_MODE_INPUT        			//Entrada
-	   GPIO_MODE_INPUT_OUTPUT 			//Dreno Aberto
-   */
-
 	gpio_set_direction(LED_BUILDING, GPIO_MODE_OUTPUT);
-	gpio_set_level(LED_BUILDING, 1);  //O Led desliga em nível 1;
+	gpio_set_level(LED_BUILDING, 1);
 	bool estado = 0;
 	int delay_blink = 0;
 
 	while (TRUE)
 	{
-		//int delay_blink = 0;
 		EventBits_t event_bits = xEventGroupGetBits(s_wifi_event_group);
 
-		// Analisa o modo do LED
+		//Se o Wifi estiver conectado, mantem o Led aceeso.
 		if (event_bits & WIFI_CONNECTED_BIT) {
 			estado = 0;
 			delay_blink = 500;
 		}
+		//Se o Wifi estiver falhado na conexão, piscar o led a cada 100ms
 		else if (event_bits & WIFI_FAIL_BIT) {
 			estado = !estado;
 			delay_blink = 100;
 		}
+		//Se o Wifi estiver tentando conectar, pisca o led a cada 500ms;
 		else if (event_bits & WIFI_CONNECTING_BIT) {
 			estado = !estado;
 			delay_blink = 500;
 		}
+		//Caso ocorra algum erro com o grupo de bits de estado, pisca o led a cada 2s;
 		else {
 			delay_blink = 2000;
 		}
 
 		gpio_set_level(LED_BUILDING, estado);
-
-		vTaskDelay(delay_blink / portTICK_PERIOD_MS); //Delay de 50ms liberando scheduler;
+		vTaskDelay(delay_blink / portTICK_PERIOD_MS);
 	}
 }
-
+//Task responsavel pelo funcionando do botão de reconexão do wifi, caso este tenha falhado.
 void task_button(void* pvParameter) {
 
 	gpio_set_direction(BUTTON, GPIO_MODE_INPUT);
@@ -260,6 +245,7 @@ void task_button(void* pvParameter) {
 	while (1) {
 		gpio_set_level(LED_VRD, 0);
 
+		//Aguarda a falha da conexão do wifi para liberar a função do botão.
 		xEventGroupWaitBits(s_wifi_event_group, WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
 
 		if (!gpio_get_level(BUTTON))
@@ -271,11 +257,10 @@ void task_button(void* pvParameter) {
 			esp_wifi_connect();
 			gpio_set_level(LED_VRD, 1);
 		}
-
 		vTaskDelay(100 / portTICK_RATE_MS);
 	}
 }
-
+//Task responsavel pelo funcionamento do sensor ultrassonico
 void ultrasonic_test(void* pvParamters)
 {
 	ultrasonic_sensor_t sensor = {
@@ -291,6 +276,7 @@ void ultrasonic_test(void* pvParamters)
 
 		uint32_t distance;
 		esp_err_t res = ultrasonic_measure_cm(&sensor, MAX_DISTANCE_CM, &distance);
+		//Caso a função do sensor tenha falhado, apresenta o erro correspondente a falha.
 		if (res != ESP_OK)
 		{
 			printf("Error: ");
@@ -310,12 +296,18 @@ void ultrasonic_test(void* pvParamters)
 			}
 		}
 		else {
+			//Caso a leitura do sensor seja eficaz. Verifica o grupo de bits estado dos sensores
+			//Somente realizando a ação de enviar a leitura caso houver um sinal positivo nos bits estado.
 			EventBits_t event_bits = xEventGroupGetBits(sensor_event_group);
 
 			if (event_bits & SENSOR_ULTRASONIC)
 			{
-				char str[10];
+				char str[128];
+				char centm[30] = " CM \n";
 				sprintf(str, "%u", distance);
+			
+				strcat(str, centm);
+
 				xQueueSend(buffer, &str, pdMS_TO_TICKS(0));
 				xEventGroupClearBits(sensor_event_group, SENSOR_ULTRASONIC);
 				xEventGroupClearBits(sensor_event_group, SENSOR_TERMIC);
@@ -324,13 +316,11 @@ void ultrasonic_test(void* pvParamters)
 		vTaskDelay(500 / portTICK_PERIOD_MS);
 	}
 }
-
+//Taks responsavel pelo funcionamento do sensor de temperatura
 void dht_test(void* pvParameters)
 {
 	int16_t temperature = 0;
 	int16_t humidity = 0;
-
-	//gpio_set_pull_mode(dht_gpio, GPIO_PULLUP_ONLY);
 
 	while (1)
 	{
@@ -343,12 +333,13 @@ void dht_test(void* pvParameters)
 				int16_t itemp = temperature / 10;
 				int16_t ihum = humidity / 10;
 
+				//configurção para uma boa exibição das leituras.
 				char hum[10];
 				char temp[10];
 				char msg[128] = "Humidade: ";
 				char percent[10] = "%, ";
 				char temperatura[20] = "Temperatura: ";
-				char celsius[10] = "C.";
+				char celsius[10] = "C. \n";
 
 
 				sprintf(hum, "%u", ihum);
@@ -364,15 +355,14 @@ void dht_test(void* pvParameters)
 				xEventGroupClearBits(sensor_event_group, SENSOR_ULTRASONIC);
 				xEventGroupClearBits(sensor_event_group, SENSOR_TERMIC);
 			}
-		}			
+		}
 		else
 			printf("Could not read data from sensor\n");
-
 
 		vTaskDelay(2000 / portTICK_PERIOD_MS);
 	}
 }
-
+//Task responsavel pela conexão  e comunicação com o servidor socket
 static void tcp_client_task(void* pvParameters)
 {
 	char rx_buffer[256];
@@ -404,6 +394,7 @@ static void tcp_client_task(void* pvParameters)
 
 		xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
 
+		//Verificação de criação do socket
 		int sock = socket(addr_family, SOCK_STREAM, ip_protocol);
 		if (sock < 0) {
 			ESP_LOGE(TAG2, "Unable to create socket: errno in socket %d", errno);
@@ -411,6 +402,7 @@ static void tcp_client_task(void* pvParameters)
 		}
 		ESP_LOGI(TAG2, "Socket created");
 
+		//Verificação de conexão com o servidor
 		int err = connect(sock, (struct sockaddr*)&destAddr, sizeof(destAddr));
 		if (err != 0) {
 			ESP_LOGE(TAG2, "Socket unable to connect: errno in connect %d", errno);
@@ -422,46 +414,64 @@ static void tcp_client_task(void* pvParameters)
 		bool estado = 0;
 		while (1) {
 
+			//Verificação de mensagem recebida do servidor
 			int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-			// Error occured during receiving
 			if (len < 0) {
 				ESP_LOGE(TAG2, "recv failed: errno %d", errno);
 				break;
 			}
 
 			else {
-				rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string
-			   // ESP_LOGI(TAG2, "Received %d bytes from %s:", len, addr_str);
-			   // ESP_LOGI(TAG2, "%s", rx_buffer);
+				rx_buffer[len] = 0;
+				/*Caso a mensagem seja DIST, dispara o bit estado para o sensor ultrassonico,
+				este que verificara em sua propria task, e encaminha a mensagem com sua leitura na fila Queue */
 				if (len >= 4 && rx_buffer[0] == 'D' && rx_buffer[1] == 'I' && rx_buffer[2] == 'S' && rx_buffer[3] == 'T')
 				{
-					printf("Mensagem: ULTRASSONIC \n");
+					char msgDist[30] = "Mensagem: ULTRASSONIC: ";
+					int err = send(sock, msgDist, strlen(msgDist), 0);
+					if (err < 0) {
+						ESP_LOGE(TAG2, "Error occured during sending to server: errno %d", errno);
+						break;
+					}
 					xEventGroupSetBits(sensor_event_group, SENSOR_ULTRASONIC);
 				}
+				/*Caso a mensagem seja TEMP, dispara o bit estado para o sensor de temperatura,
+					este que verificara em sua propria task, e encaminha a mensagem com sua leitura na fila Queue */
 				else if (len >= 4 && rx_buffer[0] == 'T' && rx_buffer[1] == 'E' && rx_buffer[2] == 'M' && rx_buffer[3] == 'P')
 				{
-					printf("Mensagem: TERMIC \n");
+					char msgTemp[30] = "Mensagem: TERMIC: ";
+					int err = send(sock, msgTemp, strlen(msgTemp), 0);
+					if (err < 0) {
+						ESP_LOGE(TAG2, "Error occured during sending to server: errno %d", errno);
+						break;
+					}
 					xEventGroupSetBits(sensor_event_group, SENSOR_TERMIC);
 				}
+				/*Caso a mensagem recebida nao se encaixe em nenhuma valida, dispara uma mensagem com as instruções corretas*/
 				else {
 					printf("Mensagem: %s \n", MSG_);
+					int err = send(sock, MSG_, strlen(MSG_), 0);
+					if (err < 0) {
+						ESP_LOGE(TAG2, "Error occured during sending to server: errno %d", errno);
+						break;
+					}
 				}
 			}
-
-			int err = send(sock, rx_buffer, strlen(rx_buffer), 0);
-			if (err < 0) {
-				ESP_LOGE(TAG2, "Error occured during sending: errno %d", errno);
-				break;
-			}
-
-			if (xQueueReceive(buffer, &rx_buffer_rcv, pdMS_TO_TICKS(2000)) == true)//Se recebeu o valor dentro de 1seg (timeout), mostrara na tela
+			/*Verifica a Queue de mensagens, caso ela tenha recebido alguma mensagem nos ultimos segundos,
+			ira transmitir a mesma para o servidor*/
+			if (xQueueReceive(buffer, &rx_buffer_rcv, pdMS_TO_TICKS(2000)) == true)
 			{
-				printf("Mensagem: %s \n", rx_buffer_rcv);
+				printf("Mensagem: %s : ", rx_buffer_rcv);
+				int err = send(sock, rx_buffer_rcv, strlen(rx_buffer_rcv), 0);
+				if (err < 0) {
+					ESP_LOGE(TAG2, "Error occured during sending to server: errno %d", errno);
+					break;
+				}
 			}
 
 			vTaskDelay(2000 / portTICK_PERIOD_MS);
 		}
-
+		/*Caso a conexão com o servidor caia, entrara em processo de reconexão*/
 		if (sock != -1) {
 			ESP_LOGE(TAG2, "Shutting down socket and restarting...");
 			shutdown(sock, 0);
@@ -471,24 +481,18 @@ static void tcp_client_task(void* pvParameters)
 	vTaskDelete(NULL);
 }
 
-/* Aplicação Principal (Inicia após bootloader) */
+/* Aplicação Principal/Inicial */
 void app_main(void)
 {
 
 	sensor_event_group = xEventGroupCreate();
-	char rx_buffer[256];
-	/*	Sempre que utilizar o WiFi ou o Bluetooth adicione o bloco a seguir para inicializar a NVS (Non-volatile storage).
-		Este espaço de memória reservado armazena dados necessários para a calibração do PHY.
-		Devido ao fato de o ESP não possuir EEPROM é necessário separar um pedaço da memória de programa para armazenar
-		dados não voláteis*/
+
+	//Metodos para utilização das funções de conexão com wifi
 	esp_err_t ret = nvs_flash_init();
 	if (ret == ESP_ERR_NVS_NO_FREE_PAGES) {
 		ESP_ERROR_CHECK(nvs_flash_erase());
 		ret = nvs_flash_init();
 	}
-	ESP_ERROR_CHECK(ret);
-
-	ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
 	//Configura e inicializa o WiFi.
 	wifi_init_sta();
 
@@ -503,6 +507,7 @@ void app_main(void)
 	xTaskCreate(dht_test, "dht_test", configMINIMAL_STACK_SIZE * 3, NULL, 5, NULL);
 
 	//ConexaoSocket
-	buffer = xQueueCreate(20, sizeof(rx_buffer)-1);//Cria a queue *buffer* com 10 slots de 4 Bytes
+	char rx_buffer[256];
+	buffer = xQueueCreate(20, sizeof(rx_buffer) - 1);//Cria a queue *buffer* com 10 slots
 	xTaskCreate(tcp_client_task, "tcp_client", 4096, NULL, 5, NULL);
 }
